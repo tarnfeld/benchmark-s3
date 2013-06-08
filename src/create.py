@@ -119,11 +119,11 @@ def main(bucket, aws_key, aws_secret, interval, days, format, concurrency):
         queue.put(k)
         current += timedelta(seconds=interval)
 
-    alive = True
-    while alive:
+    alive = len(threads)
+    while alive > 0:
         for thread in threads:
-            if thread.isAlive():
-                alive = True
+            if not thread.isAlive():
+                alive -= 1
 
 
 if __name__ == "__main__":
