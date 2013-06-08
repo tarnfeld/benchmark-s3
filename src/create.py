@@ -1,11 +1,12 @@
 import argparse
 import sys
 import logging
+import atexit
 from os import environ
 from datetime import datetime, timedelta
 from boto.s3.connection import S3Connection
 from boto.s3.key import Key
-from threading import Thread
+from threading import Thread, Event
 from Queue import Queue, Empty as EmptyException
 
 
@@ -49,11 +50,16 @@ class S3KeyThread(Thread):
         self.queue = queue
         self.timeout = timeout
         self.num = num
+        self.kill = Event()
 
     def run(self):
 
         try:
             while True:
+                if self.kill.isSet():
+                    logger.debug("Thread exiting %d" % (self.num))
+                    break
+
                 key = self.queue.get(timeout=self.timeout)
                 key.set_contents_from_string("")
 
@@ -89,10 +95,20 @@ def main(bucket, aws_key, aws_secret, interval, days, format, concurrency):
     queue = Queue()
 
     # Create some children to make the S3 requests
+    threads = []
     for i in range(concurrency):
         logger.info("Spawning thread %d" % (i))
         thread = S3KeyThread(queue=queue, timeout=1, num=i)
+        thread.daemon = True
+        threads.append(thread)
         thread.start()
+
+    # Kill the threads if asked to
+    def handler():
+        for thread in threads:
+            logger.debug("Killing thread %d" % (thread.num))
+            thread.kill.set()
+    atexit.register(handler)
 
     # Put a shit load of items on the queue
     current = from_date
@@ -102,6 +118,12 @@ def main(bucket, aws_key, aws_secret, interval, days, format, concurrency):
 
         queue.put(k)
         current += timedelta(seconds=interval)
+
+    alive = True
+    while alive:
+        for thread in threads:
+            if thread.isAlive():
+                alive = True
 
 
 if __name__ == "__main__":
